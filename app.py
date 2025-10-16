@@ -96,7 +96,17 @@ def create_user(user_id):
         headers=headers,
         json=payload
     )
-    return response.json()[0] if response.status_code == 201 else None
+    if response.status_code == 201:
+        return response.json()[0]
+    # User already exists
+    if response.status_code == 409:
+        return get_user(user_id)
+    # Log error to server console for debugging
+    try:
+        print(f"create_user error: status={response.status_code}, body={response.text}")
+    except Exception:
+        pass
+    return None
 
 
 def update_user_credits(user_id, new_credits):
