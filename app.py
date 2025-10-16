@@ -216,13 +216,49 @@ def generate_image(prompt):
         if response.status_code == 200:
             data = response.json()
             print(f"Full response data: {data}")
-            
-            # Check for image in content
-            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            message = data.get("choices", [{}])[0].get("message", {})
+            content = message.get("content", "")
             print(f"Generated content: {content[:500]}")
 
-            # Look for image URLs in content
-            if "http" in content:
+            # When OpenRouter returns multi-part content (list of blocks)
+            if isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    block_type = block.get("type", "").lower()
+
+                    # Gemini image responses usually include base64 directly
+                    image_b64 = block.get("image_base64") or block.get("b64_json")
+                    if image_b64:
+                        mime_type = block.get("mime_type", "image/png")
+                        print(f"Found base64 image block with mime: {mime_type}")
+                        return {"type": "base64", "data": image_b64, "mime": mime_type}
+
+                    # Some responses may reference a URL
+                    url = block.get("url") or block.get("image_url") or block.get("file_path")
+                    if url and url.startswith("http"):
+                        print(f"Found image URL in block: {url}")
+                        return {"type": "url", "data": url}
+
+                    # Fallback: the block might be plain text that still contains an URL
+                    text_payload = block.get("text") or ""
+                    if isinstance(text_payload, str) and "http" in text_payload:
+                        lines = text_payload.split("\n")
+                        for line in lines:
+                            if "http" in line:
+                                url_start = line.find("http")
+                                url_end = line.find(")", url_start)
+                                if url_end == -1:
+                                    url_end = line.find(" ", url_start)
+                                if url_end == -1:
+                                    url_end = len(line)
+                                image_url = line[url_start:url_end].strip()
+                                if image_url:
+                                    print(f"Found image URL in text block: {image_url}")
+                                    return {"type": "url", "data": image_url}
+
+            # Historic responses were plain text strings
+            if isinstance(content, str) and "http" in content:
                 lines = content.split("\n")
                 for line in lines:
                     if "http" in line:
@@ -235,30 +271,26 @@ def generate_image(prompt):
                         if url_end == -1:
                             url_end = len(line)
                         image_url = line[url_start:url_end].strip()
-                        if image_url and (image_url.endswith('.png') or image_url.endswith('.jpg') or image_url.endswith('.jpeg') or 'image' in image_url.lower()):
-                            print(f"Found image URL: {image_url}")
-                            return image_url
+                        if image_url:
+                            print(f"Found image URL in string content: {image_url}")
+                            return {"type": "url", "data": image_url}
 
-            # Check if there's an image in the response data structure
-            message = data.get("choices", [{}])[0].get("message", {})
-            if "image" in str(message).lower() or "url" in str(message).lower():
-                print(f"Found potential image in message structure: {message}")
-                # Try to extract any URL from the message
-                message_str = str(message)
-                if "http" in message_str:
-                    url_start = message_str.find("http")
-                    url_end = message_str.find("'", url_start)
-                    if url_end == -1:
-                        url_end = message_str.find('"', url_start)
-                    if url_end == -1:
-                        url_end = message_str.find(" ", url_start)
-                    if url_end == -1:
-                        url_end = len(message_str)
-                    potential_url = message_str[url_start:url_end].strip()
-                    print(f"Extracted potential URL: {potential_url}")
-                    return potential_url
+            # Some providers may return dedicated image fields
+            images = message.get("images") or []
+            if isinstance(images, list):
+                for img in images:
+                    if isinstance(img, dict):
+                        image_b64 = img.get("image_base64") or img.get("b64_json")
+                        if image_b64:
+                            mime_type = img.get("mime_type", "image/png")
+                            print(f"Found base64 image in 'images' list with mime: {mime_type}")
+                            return {"type": "base64", "data": image_b64, "mime": mime_type}
+                        url = img.get("url")
+                        if url and url.startswith("http"):
+                            print(f"Found image URL in 'images' list: {url}")
+                            return {"type": "url", "data": url}
 
-            print("No HTTP URL found in response")
+            print("No image content found in response")
             return None
         else:
             print(f"OpenRouter error: {response.status_code} - {response.text}")
@@ -361,31 +393,65 @@ def webhook():
 
         send_telegram_message(chat_id, "🎨 Génération en cours...")
 
-        image_url = generate_image(text)
+        image_data = generate_image(text)
 
-        if image_url:
-            # Download and encode the image as base64
-            send_telegram_message(chat_id, "📥 Téléchargement de l'image...")
-            image_base64 = download_and_encode_image(image_url)
-            
-            if image_base64:
-                # Create data URL for Telegram
-                image_data_url = f"data:image/png;base64,{image_base64}"
-                
-                new_credits = user['credits'] - 1
-                update_user_credits(user_id, new_credits)
-                save_prompt(user_id, text, image_url)
+        if image_data:
+            image_caption = None
 
-                send_telegram_photo(
-                    chat_id,
-                    image_data_url,
-                    f"✅ Image générée!\n\n💳 Crédits restants: *{new_credits}*"
-                )
-            else:
+            if isinstance(image_data, dict):
+                data_type = image_data.get("type")
+
+                if data_type == "base64":
+                    mime = image_data.get("mime", "image/png")
+                    image_data_url = f"data:{mime};base64,{image_data.get('data')}"
+                    new_credits = user['credits'] - 1
+                    update_user_credits(user_id, new_credits)
+                    save_prompt(user_id, text, "inline_base64")
+                    image_caption = f"✅ Image générée!\n\n💳 Crédits restants: *{new_credits}*"
+                    send_telegram_photo(chat_id, image_data_url, image_caption)
+                    return 'OK', 200
+
+                if data_type == "url":
+                    image_url = image_data.get("data")
+                    if image_url:
+                        send_telegram_message(chat_id, "📥 Téléchargement de l'image...")
+                        image_base64 = download_and_encode_image(image_url)
+
+                        if image_base64:
+                            image_data_url = f"data:image/png;base64,{image_base64}"
+                            new_credits = user['credits'] - 1
+                            update_user_credits(user_id, new_credits)
+                            save_prompt(user_id, text, image_url)
+                            image_caption = f"✅ Image générée!\n\n💳 Crédits restants: *{new_credits}*"
+                            send_telegram_photo(chat_id, image_data_url, image_caption)
+                            return 'OK', 200
+
+                        send_telegram_message(
+                            chat_id,
+                            "❌ Erreur lors du téléchargement de l'image. Réessaie plus tard."
+                        )
+                        return 'OK', 200
+
+            # Fallback if generate_image returned a URL string
+            if isinstance(image_data, str):
+                send_telegram_message(chat_id, "📥 Téléchargement de l'image...")
+                image_base64 = download_and_encode_image(image_data)
+
+                if image_base64:
+                    image_data_url = f"data:image/png;base64,{image_base64}"
+                    new_credits = user['credits'] - 1
+                    update_user_credits(user_id, new_credits)
+                    save_prompt(user_id, text, image_data)
+                    image_caption = f"✅ Image générée!\n\n💳 Crédits restants: *{new_credits}*"
+                    send_telegram_photo(chat_id, image_data_url, image_caption)
+                    return 'OK', 200
+
                 send_telegram_message(
                     chat_id,
                     "❌ Erreur lors du téléchargement de l'image. Réessaie plus tard."
                 )
+                return 'OK', 200
+
         else:
             send_telegram_message(
                 chat_id,
