@@ -307,6 +307,66 @@ def index():
     return 'GeminiArtBot is running!', 200
 
 
+@app.route('/debug')
+def debug():
+    """Debug endpoint to test Supabase connection"""
+    try:
+        # Test basic connection
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}"
+        }
+        
+        response = requests.get(f"{SUPABASE_API_URL}/users?limit=1", headers=headers)
+        
+        # Test user creation
+        test_user_id = 999999999
+        payload = {
+            "id": test_user_id,
+            "credits": 3,
+            "language": "fr"
+        }
+        
+        create_response = requests.post(
+            f"{SUPABASE_API_URL}/users",
+            headers={**headers, "Content-Type": "application/json"},
+            json=payload
+        )
+        
+        # Test user retrieval
+        get_response = requests.get(
+            f"{SUPABASE_API_URL}/users?id=eq.{test_user_id}",
+            headers=headers
+        )
+        
+        return {
+            "status": "debug_info",
+            "supabase_url": SUPABASE_URL,
+            "supabase_key_set": bool(SUPABASE_KEY),
+            "telegram_token_set": bool(TELEGRAM_TOKEN),
+            "openrouter_key_set": bool(OPENROUTER_API_KEY),
+            "connection_test": {
+                "status_code": response.status_code,
+                "response": response.text[:200] if response.text else "No response"
+            },
+            "create_test": {
+                "status_code": create_response.status_code,
+                "response": create_response.text[:200] if create_response.text else "No response"
+            },
+            "get_test": {
+                "status_code": get_response.status_code,
+                "response": get_response.text[:200] if get_response.text else "No response"
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "supabase_url": SUPABASE_URL,
+            "supabase_key_set": bool(SUPABASE_KEY)
+        }
+
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
