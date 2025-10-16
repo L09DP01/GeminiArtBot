@@ -97,7 +97,17 @@ def create_user(user_id):
         json=payload
     )
     if response.status_code == 201:
-        return response.json()[0]
+        # Some setups may return 201 with an empty body. Fallback to fetching the user.
+        try:
+            data = response.json()
+            if isinstance(data, list) and data:
+                return data[0]
+        except Exception:
+            pass
+        # Fallback: fetch created user
+        fetched = get_user(user_id)
+        if fetched:
+            return fetched
     # User already exists
     if response.status_code == 409:
         return get_user(user_id)
