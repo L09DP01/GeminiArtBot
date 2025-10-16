@@ -186,6 +186,60 @@ def download_and_encode_image(image_url):
         return None
 
 
+def _extract_image_payload(response_json):
+    """Normalize OpenRouter response into a consistent image payload."""
+    message = response_json.get("choices", [{}])[0].get("message", {})
+    content = message.get("content", [])
+
+    # Newer responses provide rich content blocks
+    if isinstance(content, list):
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+
+            image_b64 = block.get("image_base64") or block.get("b64_json")
+            if image_b64:
+                mime_type = block.get("mime_type", "image/png")
+                print(f"Found base64 image block with mime: {mime_type}")
+                return {"type": "base64", "data": image_b64, "mime": mime_type}
+
+            url = block.get("url") or block.get("image_url") or block.get("file_path")
+            if url and url.startswith("http"):
+                print(f"Found image URL in block: {url}")
+                return {"type": "url", "data": url}
+
+            text_payload = block.get("text")
+            if isinstance(text_payload, str) and "http" in text_payload:
+                candidate = text_payload.split()[0]
+                if candidate.startswith("http"):
+                    print(f"Found image URL in text block: {candidate}")
+                    return {"type": "url", "data": candidate}
+
+    # Legacy payloads may return string content with URLs
+    if isinstance(content, str) and "http" in content:
+        for line in content.split():
+            if line.startswith("http"):
+                print(f"Found image URL in string content: {line}")
+                return {"type": "url", "data": line}
+
+    # Some providers still use `images` list
+    for img in message.get("images") or []:
+        if not isinstance(img, dict):
+            continue
+        image_b64 = img.get("image_base64") or img.get("b64_json")
+        if image_b64:
+            mime_type = img.get("mime_type", "image/png")
+            print(f"Found base64 image in 'images' list with mime: {mime_type}")
+            return {"type": "base64", "data": image_b64, "mime": mime_type}
+        url = img.get("url")
+        if url and url.startswith("http"):
+            print(f"Found image URL in 'images' list: {url}")
+            return {"type": "url", "data": url}
+
+    print("No image content found in response payload")
+    return None
+
+
 def generate_image(prompt):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -216,81 +270,9 @@ def generate_image(prompt):
         if response.status_code == 200:
             data = response.json()
             print(f"Full response data: {data}")
-            message = data.get("choices", [{}])[0].get("message", {})
-            content = message.get("content", "")
-            print(f"Generated content: {content[:500]}")
-
-            # When OpenRouter returns multi-part content (list of blocks)
-            if isinstance(content, list):
-                for block in content:
-                    if not isinstance(block, dict):
-                        continue
-                    block_type = block.get("type", "").lower()
-
-                    # Gemini image responses usually include base64 directly
-                    image_b64 = block.get("image_base64") or block.get("b64_json")
-                    if image_b64:
-                        mime_type = block.get("mime_type", "image/png")
-                        print(f"Found base64 image block with mime: {mime_type}")
-                        return {"type": "base64", "data": image_b64, "mime": mime_type}
-
-                    # Some responses may reference a URL
-                    url = block.get("url") or block.get("image_url") or block.get("file_path")
-                    if url and url.startswith("http"):
-                        print(f"Found image URL in block: {url}")
-                        return {"type": "url", "data": url}
-
-                    # Fallback: the block might be plain text that still contains an URL
-                    text_payload = block.get("text") or ""
-                    if isinstance(text_payload, str) and "http" in text_payload:
-                        lines = text_payload.split("\n")
-                        for line in lines:
-                            if "http" in line:
-                                url_start = line.find("http")
-                                url_end = line.find(")", url_start)
-                                if url_end == -1:
-                                    url_end = line.find(" ", url_start)
-                                if url_end == -1:
-                                    url_end = len(line)
-                                image_url = line[url_start:url_end].strip()
-                                if image_url:
-                                    print(f"Found image URL in text block: {image_url}")
-                                    return {"type": "url", "data": image_url}
-
-            # Historic responses were plain text strings
-            if isinstance(content, str) and "http" in content:
-                lines = content.split("\n")
-                for line in lines:
-                    if "http" in line:
-                        url_start = line.find("http")
-                        url_end = line.find(")", url_start)
-                        if url_end == -1:
-                            url_end = line.find(" ", url_start)
-                        if url_end == -1:
-                            url_end = line.find("\n", url_start)
-                        if url_end == -1:
-                            url_end = len(line)
-                        image_url = line[url_start:url_end].strip()
-                        if image_url:
-                            print(f"Found image URL in string content: {image_url}")
-                            return {"type": "url", "data": image_url}
-
-            # Some providers may return dedicated image fields
-            images = message.get("images") or []
-            if isinstance(images, list):
-                for img in images:
-                    if isinstance(img, dict):
-                        image_b64 = img.get("image_base64") or img.get("b64_json")
-                        if image_b64:
-                            mime_type = img.get("mime_type", "image/png")
-                            print(f"Found base64 image in 'images' list with mime: {mime_type}")
-                            return {"type": "base64", "data": image_b64, "mime": mime_type}
-                        url = img.get("url")
-                        if url and url.startswith("http"):
-                            print(f"Found image URL in 'images' list: {url}")
-                            return {"type": "url", "data": url}
-
-            print("No image content found in response")
+            normalized = _extract_image_payload(data)
+            if normalized:
+                return normalized
             return None
         else:
             print(f"OpenRouter error: {response.status_code} - {response.text}")
@@ -403,7 +385,10 @@ def webhook():
 
                 if data_type == "base64":
                     mime = image_data.get("mime", "image/png")
-                    image_data_url = f"data:{mime};base64,{image_data.get('data')}"
+                    base64_payload = image_data.get("data", "")
+                    if "," in base64_payload:
+                        base64_payload = base64_payload.split(",", 1)[1]
+                    image_data_url = f"data:{mime};base64,{base64_payload}"
                     new_credits = user['credits'] - 1
                     update_user_credits(user_id, new_credits)
                     save_prompt(user_id, text, "inline_base64")
@@ -431,6 +416,13 @@ def webhook():
                             "❌ Erreur lors du téléchargement de l'image. Réessaie plus tard."
                         )
                         return 'OK', 200
+
+                print(f"Unsupported image payload: {image_data}")
+                send_telegram_message(
+                    chat_id,
+                    "❌ Le format de l'image générée n'est pas supporté pour le moment."
+                )
+                return 'OK', 200
 
             # Fallback if generate_image returned a URL string
             if isinstance(image_data, str):
