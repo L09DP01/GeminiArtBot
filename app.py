@@ -157,13 +157,14 @@ def generate_image(prompt):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "google/gemini-2.5-flash-image-preview",
+        "model": "google/gemini-2.0-flash-exp",
         "messages": [
             {
                 "role": "user",
                 "content": prompt
             }
-        ]
+        ],
+        "modalities": ["image", "text"]
     }
 
     try:
@@ -179,9 +180,13 @@ def generate_image(prompt):
 
         if response.status_code == 200:
             data = response.json()
+            print(f"Full response data: {data}")
+            
+            # Check for image in content
             content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            print(f"Generated content: {content[:200]}")
+            print(f"Generated content: {content[:500]}")
 
+            # Look for image URLs in content
             if "http" in content:
                 lines = content.split("\n")
                 for line in lines:
@@ -191,10 +196,32 @@ def generate_image(prompt):
                         if url_end == -1:
                             url_end = line.find(" ", url_start)
                         if url_end == -1:
+                            url_end = line.find("\n", url_start)
+                        if url_end == -1:
                             url_end = len(line)
                         image_url = line[url_start:url_end].strip()
-                        print(f"Found image URL: {image_url}")
-                        return image_url
+                        if image_url and (image_url.endswith('.png') or image_url.endswith('.jpg') or image_url.endswith('.jpeg') or 'image' in image_url.lower()):
+                            print(f"Found image URL: {image_url}")
+                            return image_url
+
+            # Check if there's an image in the response data structure
+            message = data.get("choices", [{}])[0].get("message", {})
+            if "image" in str(message).lower() or "url" in str(message).lower():
+                print(f"Found potential image in message structure: {message}")
+                # Try to extract any URL from the message
+                message_str = str(message)
+                if "http" in message_str:
+                    url_start = message_str.find("http")
+                    url_end = message_str.find("'", url_start)
+                    if url_end == -1:
+                        url_end = message_str.find('"', url_start)
+                    if url_end == -1:
+                        url_end = message_str.find(" ", url_start)
+                    if url_end == -1:
+                        url_end = len(message_str)
+                    potential_url = message_str[url_start:url_end].strip()
+                    print(f"Extracted potential URL: {potential_url}")
+                    return potential_url
 
             print("No HTTP URL found in response")
             return None
@@ -334,13 +361,14 @@ def test_openrouter():
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "google/gemini-2.5-flash-image-preview",
+            "model": "google/gemini-2.0-flash-exp",
             "messages": [
                 {
                     "role": "user",
                     "content": "Generate an image of a cute cat"
                 }
-            ]
+            ],
+            "modalities": ["image", "text"]
         }
         
         response = requests.post(
