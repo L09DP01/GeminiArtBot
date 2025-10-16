@@ -174,9 +174,13 @@ def generate_image(prompt):
             timeout=60
         )
 
+        print(f"OpenRouter response status: {response.status_code}")
+        print(f"OpenRouter response text: {response.text[:500]}")
+
         if response.status_code == 200:
             data = response.json()
             content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            print(f"Generated content: {content[:200]}")
 
             if "http" in content:
                 lines = content.split("\n")
@@ -188,10 +192,14 @@ def generate_image(prompt):
                             url_end = line.find(" ", url_start)
                         if url_end == -1:
                             url_end = len(line)
-                        return line[url_start:url_end].strip()
+                        image_url = line[url_start:url_end].strip()
+                        print(f"Found image URL: {image_url}")
+                        return image_url
 
+            print("No HTTP URL found in response")
             return None
         else:
+            print(f"OpenRouter error: {response.status_code} - {response.text}")
             return None
     except Exception as e:
         print(f"Error generating image: {e}")
@@ -315,6 +323,46 @@ def webhook():
 @app.route('/')
 def index():
     return 'GeminiArtBot is running!', 200
+
+
+@app.route('/test-openrouter')
+def test_openrouter():
+    """Test OpenRouter API directly"""
+    try:
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "google/gemini-2.5-flash-image-preview",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Generate an image of a cute cat"
+                }
+            ]
+        }
+        
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+        
+        return {
+            "status": "openrouter_test",
+            "api_key_set": bool(OPENROUTER_API_KEY),
+            "response_status": response.status_code,
+            "response_text": response.text[:1000] if response.text else "No response",
+            "response_json": response.json() if response.headers.get('content-type', '').startswith('application/json') else "Not JSON"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "api_key_set": bool(OPENROUTER_API_KEY)
+        }
 
 
 @app.route('/debug')
