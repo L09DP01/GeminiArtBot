@@ -1,5 +1,6 @@
 import os
 import requests
+import base64
 from flask import Flask, request
 from dotenv import load_dotenv
 
@@ -26,14 +27,29 @@ def send_telegram_message(chat_id, text):
     requests.post(url, json=payload)
 
 
-def send_telegram_photo(chat_id, photo_url, caption=""):
+def send_telegram_photo(chat_id, photo_data, caption=""):
+    """Send photo to Telegram. photo_data can be either a URL or base64 encoded image data"""
     url = f"{TELEGRAM_API_URL}/sendPhoto"
-    payload = {
-        "chat_id": chat_id,
-        "photo": photo_url,
-        "caption": caption
-    }
-    requests.post(url, json=payload)
+    
+    # Check if photo_data is base64 (starts with data:image) or a URL
+    if photo_data.startswith('data:image'):
+        # It's base64 data, send as document with photo parameter
+        payload = {
+            "chat_id": chat_id,
+            "photo": photo_data,
+            "caption": caption
+        }
+    else:
+        # It's a URL
+        payload = {
+            "chat_id": chat_id,
+            "photo": photo_data,
+            "caption": caption
+        }
+    
+    response = requests.post(url, json=payload)
+    print(f"Telegram photo send response: {response.status_code}")
+    return response
 
 
 def send_menu(chat_id):
@@ -149,6 +165,25 @@ def save_prompt(user_id, prompt_text, image_url):
         headers=headers,
         json=payload
     )
+
+
+def download_and_encode_image(image_url):
+    """Download image from URL and encode it as base64"""
+    try:
+        print(f"Downloading image from: {image_url}")
+        response = requests.get(image_url, timeout=30)
+        
+        if response.status_code == 200:
+            # Encode the image as base64
+            image_base64 = base64.b64encode(response.content).decode('utf-8')
+            print(f"Image downloaded and encoded successfully, size: {len(image_base64)} chars")
+            return image_base64
+        else:
+            print(f"Failed to download image: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"Error downloading image: {e}")
+        return None
 
 
 def generate_image(prompt):
@@ -329,15 +364,28 @@ def webhook():
         image_url = generate_image(text)
 
         if image_url:
-            new_credits = user['credits'] - 1
-            update_user_credits(user_id, new_credits)
-            save_prompt(user_id, text, image_url)
+            # Download and encode the image as base64
+            send_telegram_message(chat_id, "📥 Téléchargement de l'image...")
+            image_base64 = download_and_encode_image(image_url)
+            
+            if image_base64:
+                # Create data URL for Telegram
+                image_data_url = f"data:image/png;base64,{image_base64}"
+                
+                new_credits = user['credits'] - 1
+                update_user_credits(user_id, new_credits)
+                save_prompt(user_id, text, image_url)
 
-            send_telegram_photo(
-                chat_id,
-                image_url,
-                f"✅ Image générée!\n\n💳 Crédits restants: *{new_credits}*"
-            )
+                send_telegram_photo(
+                    chat_id,
+                    image_data_url,
+                    f"✅ Image générée!\n\n💳 Crédits restants: *{new_credits}*"
+                )
+            else:
+                send_telegram_message(
+                    chat_id,
+                    "❌ Erreur lors du téléchargement de l'image. Réessaie plus tard."
+                )
         else:
             send_telegram_message(
                 chat_id,
