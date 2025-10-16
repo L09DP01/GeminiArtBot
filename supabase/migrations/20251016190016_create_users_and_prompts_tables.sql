@@ -74,6 +74,23 @@ CREATE POLICY "Service role can update users"
   USING (true)
   WITH CHECK (true);
 
+-- Allow anon access for bot operations
+CREATE POLICY "Anon can read users"
+  ON users FOR SELECT
+  TO anon
+  USING (true);
+
+CREATE POLICY "Anon can insert users"
+  ON users FOR INSERT
+  TO anon
+  WITH CHECK (true);
+
+CREATE POLICY "Anon can update users"
+  ON users FOR UPDATE
+  TO anon
+  USING (true)
+  WITH CHECK (true);
+
 -- RLS Policies for prompts table
 CREATE POLICY "Users can read own prompts"
   ON prompts FOR SELECT
@@ -88,4 +105,15 @@ CREATE POLICY "Service role can insert prompts"
 CREATE POLICY "Service role can read all prompts"
   ON prompts FOR SELECT
   TO service_role
+  USING (true);
+
+-- Allow anon access for bot operations
+CREATE POLICY "Anon can insert prompts"
+  ON prompts FOR INSERT
+  TO anon
+  WITH CHECK (true);
+
+CREATE POLICY "Anon can read prompts"
+  ON prompts FOR SELECT
+  TO anon
   USING (true);
