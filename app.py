@@ -194,10 +194,12 @@ def webhook():
             send_telegram_message(chat_id, "📸 Envoie-moi une photo maintenant.")
         elif callback_data == 'check_credits':
             user = get_user(user_id)
+            if not user:
+                user = create_user(user_id)
             if user:
                 send_telegram_message(chat_id, f"🎁 Tu as *{user['credits']} crédit(s)* disponibles.")
             else:
-                send_telegram_message(chat_id, "❌ Utilise /start pour t'inscrire d'abord.")
+                send_telegram_message(chat_id, "❌ Erreur de création du compte. Réessaie plus tard.")
         elif callback_data == 'buy_credits':
             send_telegram_message(chat_id, "💳 Paiement bientôt disponible via Stripe/Telegram.")
         elif callback_data == 'about_bot':
@@ -237,6 +239,8 @@ def webhook():
 
     elif text.startswith('/credits'):
         user = get_user(user_id)
+        if not user:
+            user = create_user(user_id)
         if user:
             send_telegram_message(
                 chat_id,
@@ -245,7 +249,7 @@ def webhook():
         else:
             send_telegram_message(
                 chat_id,
-                "❌ Utilise /start pour t'inscrire d'abord."
+                "❌ Erreur de création du compte. Réessaie plus tard."
             )
 
     else:
@@ -294,4 +298,5 @@ def index():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    port = int(os.getenv('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
