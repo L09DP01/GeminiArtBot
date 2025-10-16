@@ -157,7 +157,7 @@ def generate_image(prompt):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "google/gemini-2.0-flash-exp",
+        "model": "google/gemini-2.5-flash-image-preview",
         "messages": [
             {
                 "role": "user",
@@ -361,7 +361,7 @@ def test_openrouter():
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "google/gemini-2.0-flash-exp",
+            "model": "google/gemini-2.5-flash-image-preview",
             "messages": [
                 {
                     "role": "user",
